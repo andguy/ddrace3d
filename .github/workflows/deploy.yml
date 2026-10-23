@@ -1,0 +1,51 @@
+# GitHub Actions 部署到 GitHub Pages
+# 纯静态站点，无需构建：直接组装 _site 目录后上传为 Pages artifact
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同一时间只跑一个部署，新的推送会取消旧的
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 组装站点
+        run: |
+          mkdir -p _site
+          cp index.html manifest.json _site/
+          cp -r src vendor levels _site/   # vendor 里含 sfx/ 音效
+          # 告诉 Pages 不要走 Jekyll 处理，保持文件原样
+          touch _site/.nojekyll
+          echo "--- 站点内容 ---"
+          ls -la _site
+          du -sh _site
+
+      - name: 配置 Pages
+        uses: actions/configure-pages@v5
+
+      - name: 上传 Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: 部署
+        id: deployment
+        uses: actions/deploy-pages@v4

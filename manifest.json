@@ -1,0 +1,10 @@
+{
+  "name": "DDrace 3D",
+  "short_name": "DDrace3D",
+  "start_url": "./index.html",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#0b1016",
+  "theme_color": "#0b1016",
+  "icons": []
+}

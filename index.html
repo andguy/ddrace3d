@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<link rel="manifest" href="./manifest.json">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>DDrace 3D - 原型</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #0b1016; }
+  body { font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+
+  /* ── 舞台：竖屏时整体旋转 90°，让画面始终是横屏 ──
+     QQ 内置浏览器不支持 screen.orientation，orientationchange 也不可靠，
+     所以方向靠每帧轮询视口尺寸判断，布局不依赖任何事件。 */
+  #stage { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; }
+  body.rotated #stage {
+    left: 50%; top: 50%;
+    width: 100vh; height: 100vw;
+    transform: translate(-50%, -50%) rotate(var(--rot, -90deg));
+  }
+
+  #game { display: block; width: 100%; height: 100%; cursor: none; }
+  body.orbiting { cursor: grabbing; }
+
+  .hud { position: fixed; z-index: 10; color: #cfe6ff; pointer-events: none; user-select: none; font-size: 13px; }
+
+  #keys {
+    left: 16px; bottom: 16px; line-height: 1.9;
+    background: rgba(10, 18, 26, 0.72); border: 1px solid rgba(120, 190, 255, 0.18);
+    border-radius: 10px; padding: 10px 14px; backdrop-filter: blur(6px);
+  }
+  #keys b { color: #6fe3b0; font-weight: 500; }
+  #keys span { color: #7f9db8; }
+
+  #stats {
+    right: 16px; top: 16px; text-align: right; line-height: 1.9;
+    background: rgba(10, 18, 26, 0.72); border: 1px solid rgba(120, 190, 255, 0.18);
+    border-radius: 10px; padding: 10px 14px; backdrop-filter: blur(6px);
+    font-variant-numeric: tabular-nums;
+  }
+  #stats .k { color: #7f9db8; margin-right: 8px; }
+  #stats .v { color: #e8f4ff; }
+
+  /* ── 触屏 UI ── */
+  #touch { position: fixed; inset: 0; pointer-events: none; display: none; z-index: 20; }
+  body.touch #touch { display: block; }
+  body.touch #keys { display: none; }
+
+  /* 移动摇杆：只控制左右（第三人称不换车道）→ 做成横向滑条 */
+  #stick {
+    position: absolute; left: 22px; bottom: 22px; width: 168px; height: 78px;
+    border-radius: 39px; background: rgba(12, 20, 28, 0.42);
+    border: 2px solid rgba(140, 190, 240, 0.3);
+    pointer-events: auto; touch-action: none;
+  }
+  #stick-knob {
+    position: absolute; left: 50%; top: 50%; width: 58px; height: 58px;
+    margin: -29px 0 0 -29px; border-radius: 50%;
+    background: rgba(111, 227, 176, 0.55); border: 2px solid rgba(210, 240, 255, 0.55);
+  }
+  #stick-label {
+    position: absolute; left: 50%; bottom: 2px; transform: translateX(-50%);
+    font-size: 9px; color: rgba(210, 240, 255, 0.55); pointer-events: none; letter-spacing: 1px;
+  }
+
+  /* 视角轮盘：控制瞄准方向（第三人称=钩子方向，第一人称=转视角） */
+  #aimpad {
+    position: absolute; right: 20px; bottom: 20px; width: 118px; height: 118px;
+    border-radius: 50%; background: rgba(12, 20, 28, 0.42);
+    border: 2px solid rgba(140, 190, 240, 0.34);
+    pointer-events: auto; touch-action: none;
+  }
+  #aimpad::before, #aimpad::after {
+    content: ''; position: absolute; background: rgba(140, 190, 240, 0.22);
+  }
+  #aimpad::before { left: 50%; top: 6px; bottom: 6px; width: 1px; }
+  #aimpad::after { top: 50%; left: 6px; right: 6px; height: 1px; }
+  #aim-knob {
+    position: absolute; left: 50%; top: 50%; width: 48px; height: 48px;
+    margin: -24px 0 0 -24px; border-radius: 50%;
+    background: rgba(255, 196, 120, 0.5); border: 2px solid rgba(255, 226, 180, 0.6);
+  }
+  #aim-label {
+    position: absolute; left: 50%; bottom: 4px; transform: translateX(-50%);
+    font-size: 10px; color: rgba(255, 226, 180, 0.8); pointer-events: none;
+    letter-spacing: 1px; text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+  }
+
+  #tbtns { position: absolute; right: 150px; bottom: 20px; pointer-events: none; }
+  .tbtn {
+    position: absolute; border-radius: 50%; pointer-events: auto; touch-action: none;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 15px; color: #eaf6ff; background: rgba(12, 20, 28, 0.5);
+    border: 2px solid rgba(140, 190, 240, 0.35); user-select: none;
+  }
+  .tbtn:active { background: rgba(111, 227, 176, 0.45); }
+  #btn-jump { right: 0; bottom: 0; width: 72px; height: 72px; }
+  #btn-view { right: 80px; bottom: 6px; width: 60px; height: 60px; font-size: 12px; }
+
+  /* 旋转方向切换（放在左下角摇杆上方，避开右上角的统计面板） */
+  #btn-rot {
+    position: absolute; left: 22px; bottom: 168px;
+    width: 46px; height: 46px; border-radius: 50%; pointer-events: auto; touch-action: none;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px; color: #ffd166; background: rgba(12, 20, 28, 0.55);
+    border: 2px solid rgba(140, 190, 240, 0.35); user-select: none;
+  }
+  #btn-rot:active { background: rgba(111, 227, 176, 0.45); }
+
+  #jump-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    background: #6fe3b0; margin-left: 6px; transition: opacity .15s; }
+
+  #banner {
+    left: 50%; top: 18%; transform: translateX(-50%);
+    font-size: 18px; color: #ffd166; letter-spacing: 1px;
+  }
+
+  #crosshair {
+    position: fixed; left: 50%; top: 50%; width: 7px; height: 7px;
+    transform: translate(-50%, -50%); border-radius: 50%;
+    background: #ff5e5e;
+    box-shadow: 0 0 0 1px rgba(8, 16, 24, 0.75);
+    pointer-events: none;
+  }
+
+  #lockhint {
+    left: 50%; top: 50%; transform: translate(-50%, 34px);
+    color: #8fb4d4; font-size: 12px; opacity: 0;
+  }
+  body.first-person.lock-failed #lockhint { opacity: 1; }
+
+  /* 竖屏窄屏适配 */
+  @media (max-width: 560px) {
+    #stats { right: 8px; top: 8px; padding: 6px 9px; font-size: 11px; line-height: 1.6; }
+    #keys { display: none; }
+    #stick { width: 148px; height: 70px; left: 14px; bottom: 14px; border-radius: 35px; }
+    #stick-knob { width: 50px; height: 50px; margin: -25px 0 0 -25px; }
+    #aimpad { width: 104px; height: 104px; right: 12px; bottom: 12px; }
+    #aim-knob { width: 42px; height: 42px; margin: -21px 0 0 -21px; }
+    #tbtns { right: 122px; bottom: 12px; }
+    #btn-jump { right: 0; bottom: 0; width: 64px; height: 64px; font-size: 14px; }
+    #btn-view { right: 70px; bottom: 4px; width: 54px; height: 54px; font-size: 11px; }
+    #btn-rot { width: 40px; height: 40px; font-size: 17px; left: 14px; bottom: 142px; }
+  }
+
+  /* 触屏设备统一用小号按钮，横屏手机也适用 */
+  @media (pointer: coarse), (max-width: 560px) {
+    #stats { right: 8px; top: 8px; padding: 6px 9px; font-size: 11px; line-height: 1.6; }
+    #keys { display: none; }
+    #stick { width: 148px; height: 70px; left: 14px; bottom: 14px; border-radius: 35px; }
+    #stick-knob { width: 50px; height: 50px; margin: -25px 0 0 -25px; }
+    #aimpad { width: 104px; height: 104px; right: 12px; bottom: 12px; }
+    #aim-knob { width: 42px; height: 42px; margin: -21px 0 0 -21px; }
+    #tbtns { right: 122px; bottom: 12px; }
+    #btn-jump { right: 0; bottom: 0; width: 64px; height: 64px; font-size: 14px; }
+    #btn-view { right: 70px; bottom: 4px; width: 54px; height: 54px; font-size: 11px; }
+    #btn-rot { width: 40px; height: 40px; font-size: 17px; left: 14px; bottom: 142px; }
+  }
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="game"></canvas>
+  <div id="crosshair"></div>
+
+  <div id="touch">
+    <div id="stick">
+      <div id="stick-knob"></div>
+      <div id="stick-label">移动</div>
+    </div>
+    <div id="aimpad">
+      <div id="aim-knob"></div>
+      <div id="aim-label">按住瞄准</div>
+    </div>
+    <div id="tbtns">
+      <div class="tbtn" id="btn-jump">跳</div>
+      <div class="tbtn" id="btn-view">视角</div>
+    </div>
+    <div id="btn-rot" title="切换旋转方向">⟳</div>
+  </div>
+
+  <div id="keys" class="hud">
+    <div id="key-move"><b>A / D</b> <span>左右</span> &nbsp; <b>W / S</b> <span>前后进深</span></div>
+    <div><b>空格</b> <span>跳跃 / 空中二段跳</span></div>
+    <div><b>鼠标左键</b> <span>按住挂钩（朝准星方向）</span></div>
+    <div><b>V</b> <span>切换第一 / 第三人称</span> &nbsp; <b>R</b> <span>重生</span></div>
+    <div><b>鼠标中键拖动</b> <span>第三人称转视角</span> &nbsp; <b>双击中键</b> <span>复位</span></div>
+  </div>
+
+  <div id="stats" class="hud">
+    <div><span class="k">时间</span><span class="v" id="time">0.00s</span></div>
+    <div><span class="k">死亡</span><span class="v" id="deaths">0</span></div>
+    <div><span class="k">二段跳</span><span class="v"><span id="jump">就绪</span><span id="jump-dot"></span></span></div>
+  </div>
+
+  <div id="banner" class="hud"></div>
+  <div id="camangle" class="hud" style="left:50%;top:64%;transform:translateX(-50%);color:#ffd166;font-size:12px"></div>
+  <div id="lockhint" class="hud">点击画面锁定鼠标；鼠标移到屏幕边缘也可转视角</div>
+</div>
+
+<script type="module">
+  window.addEventListener('error', (e) => {
+    const t = document.createElement('div');
+    t.style.cssText = 'position:fixed;left:8px;bottom:8px;color:#ff6b6b;font-size:12px;z-index:99';
+    t.textContent = '加载失败: ' + e.message;
+    document.body.appendChild(t);
+  });
+</script>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+# 截图与调试产物（体积大且不需要进仓库）
+shot*.png
+tools/*.png
+
+# 未使用的备用素材
+vendor/bg_cloud1.png
+vendor/bg_cloud2.png
+vendor/jungle_background.png
+
+# 系统与编辑器
+.DS_Store
+Thumbs.db
+*.swp
+node_modules/
+__pycache__/
